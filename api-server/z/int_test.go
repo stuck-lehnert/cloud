@@ -19,7 +19,7 @@ func TestInt(t *testing.T) {
 	if err != nil {
 		t.Errorf("z.Int().Validate(10) should not error")
 	}
-	if i != 10 {
+	if i != int64(10) {
 		t.Errorf("z.Int().Validate(10) should evaluate 10, got %v", i)
 	}
 	if _, ok := i.(int64); !ok {
@@ -30,7 +30,7 @@ func TestInt(t *testing.T) {
 	if err != nil {
 		t.Errorf("z.Int().Validate(uint(10)) should not error")
 	}
-	if i != 10 {
+	if i != int64(10) {
 		t.Errorf("z.Int().Validate(uint(10)) should evaluate 10, got %v", i)
 	}
 	if _, ok := i.(int64); !ok {
@@ -41,7 +41,7 @@ func TestInt(t *testing.T) {
 	if err != nil {
 		t.Errorf("z.Int().Validate(\"10\") should not error")
 	}
-	if i != 10 {
+	if i != int64(10) {
 		t.Errorf("z.Int().Validate(\"10\") should evaluate 10, got %v", i)
 	}
 	if _, ok := i.(int64); !ok {

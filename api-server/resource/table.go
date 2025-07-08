@@ -113,9 +113,8 @@ func NewTableResource(props TableResourceProps) (*TableResource, error) {
 		}
 
 		if _, found := lo.Find(props.ModifiableFields, func(f string) bool { return f == field }); found {
-			return nil, fmt.Errorf("Create only field '%s' is tagged as modifiable, which is not allowed")
+			return nil, fmt.Errorf("Create only field '%s' is tagged as modifiable, which is not allowed", field)
 		}
-
 	}
 
 	for _, field := range props.ModifiableFields {
