@@ -1,5 +1,5 @@
 import {Pool} from 'pg';
-import { $resourceManager } from './framework';
+import { $resourceManager, $sql } from './framework';
 import { z } from 'zod';
 import path from 'path';
 import { $migrate } from './framework/migrations';
@@ -122,6 +122,14 @@ const Group = mgr.$sqlResource({
         },
         ...timestampFields(),
     },
+    references: {
+        // TODO: add support for junction tables
+        // userMembers: {
+        //     resource: () => User,
+        //     join: (lhs: string, rhs: string) => $sql(`${lhs}.`)
+        // },
+        // groupMembers: {},
+    },
     orderBy: { sqlColumn: '_sort', order: 'asc' },
 });
 
@@ -136,8 +144,8 @@ const Customer = mgr.$sqlResource({
             sqlColumn: 'salutation',
         },
         name: {
-            sqlColumn: 'name',
             type: z.string(),
+            sqlColumn: 'name',
         },
         ...locFields(),
         ...timestampFields(),
@@ -159,8 +167,18 @@ const Project = mgr.$sqlResource({
             sqlColumn: 'description',
             type: z.string().nullable(),
         },
+        customerId: {
+            type: z.string().nullable(),
+            sqlColumn: 'customer_id',
+        },
         ...locFields(),
         ...timestampFields(),
+    },
+    references: {
+        customer: {
+            resource: () => Customer,
+            join: (lhs: string, rhs: string) => $sql(`${lhs}.customer_id = ${rhs}.id`),
+        },
     },
     orderBy: { sqlColumn: '_sort', order: 'asc' },
 });
@@ -237,6 +255,25 @@ const ToolTracking = mgr.$sqlResource({
             sqlColumn: 'started_at',
         },
     },
+    references: {
+        tool: {
+            resource: () => Tool,
+            join: (lhs: string, rhs: string) => $sql(`${lhs}.tool_id = ${rhs}.id`),
+            mode: 'not-null',
+        },
+        project: {
+            resource: () => Project,
+            join: (lhs: string, rhs: string) => $sql(`${lhs}.project_id = ${rhs}.id`),
+        },
+        responsible: {
+            resource: () => User,
+            join: (lhs: string, rhs: string) => $sql(`${lhs}.responsible_id = ${rhs}.id`),
+        },
+        author: {
+            resource: () => User,
+            join: (lhs: string, rhs: string) => $sql(`${lhs}.author_id = ${rhs}.id`),
+        },
+    },
     orderBy: { sqlColumn: '_sort', order: 'asc' },
 });
 
@@ -261,25 +298,29 @@ const ToolInventory = mgr.$sqlResource({
     },
 });
 
-// const Product = mgr.$sqlResource({
-//     sqlTable: 'products',
-//     pkeyAttributes: ['id'],
-//     createOnlyAttributes: ['toolId', 'comment'],
-//     attributes: {
-//         ...idField(),
-//         toolId: {
-//             type: z.string(),
-//             sqlColumn: 'tool_id',
-//         },
-//         comment: {
-//             type: z.string().nullable(),
-//             sqlColumn: 'comment',
-//         },
-//         createdAt: {
-//             type: z.coerce.date(),
-//             sqlColumn: 'created_at',
-//         },
-//     },
-// });
+const Product = mgr.$sqlResource({
+    sqlTable: 'products',
+    pkeyAttributes: ['id'],
+    modifiableAttributes: ['name', 'description', 'baseUnit'],
+    attributes: {
+        ...idField(),
+        name: {
+            type: z.string(),
+            sqlColumn: 'name',
+        },
+        description: {
+            type: z.string().nullable(),
+            sqlColumn: 'description',
+        },
+        baseUnit: {
+            type: z.string(),
+            sqlColumn: 'base_unit',
+        },
+        ...timestampFields(),
+    },
+});
 
-console.log(await UserSession.ctx({}).findMany());
+console.log(await Project.ctx({}).findMany({}, { include: ['customer'] }));
+
+// (await ToolTracking.ctx({}).findUnique(null as any, { include: ['tool', 'project'] }))?.tool.id;
+// (await Tool.ctx({}).findUnique({  }));

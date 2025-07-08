@@ -1,5 +1,11 @@
 import { assert } from "./assert";
 
+export type QueryBuilder = SelectBuilder | InsertBuilder | UpdateBuilder | DeleteBuilder;
+export type SelectBuilder = ReturnType<typeof $select>;
+export type InsertBuilder = ReturnType<typeof $insert>;
+export type UpdateBuilder = ReturnType<typeof $update>;
+export type DeleteBuilder = ReturnType<typeof $delete>;
+
 function assertName(name?: string | null) {
     if (typeof name === 'string') {
         assert(/^[a-zA-Z0-9_]+$/.test(name), 'invalid sql identifier');
@@ -18,6 +24,7 @@ export function $select(table: string, alias?: string) {
 
     const { _columns, column, columns, renderColumns } = useColumns(reference);
     const { _whereClauses, where, whereValues, renderWhere } = useWhere(reference);
+    const { _joins, leftJoin, innerJoin, renderJoins } = useJoins(reference);
     const { _limit, limit } = useLimit();
     const { _offset, offset } = useOffset();
     const { _orderBy, orderBy } = useOrderBy(reference);
@@ -39,6 +46,12 @@ export function $select(table: string, alias?: string) {
         args.push(...columnsSQL[1]);
 
         sql += ` FROM "${table}" AS "${reference()}"`
+
+        const joinsSQL = renderJoins();
+        if (joinsSQL) {
+            sql += ' ' + joinsSQL[0];
+            args.push(...joinsSQL[1]);
+        }
 
         const whereSQL = renderWhere();
         if (whereSQL) {
@@ -73,6 +86,8 @@ export function $select(table: string, alias?: string) {
         columns,
         where,
         whereValues,
+        leftJoin,
+        innerJoin,
         orderBy,
         limit,
         offset,
@@ -85,12 +100,11 @@ export function $insert(table: string) {
 
     const reference = () => table;
 
-    const { _columns, column, columns, renderColumns } = useColumns(reference);
+    const { column, columns, renderColumns } = useColumns(reference);
     const { _rows, insert } = useInsert();
 
     const build = (): SQL => {
         const rows = _rows();
-        const columns = _columns();
         
         assert(rows.length);
 
@@ -227,6 +241,7 @@ export function $delete(table: string) {
     };
 
     return {
+        reference,
         where,
         whereValues,
         column,
@@ -319,6 +334,53 @@ function useWhere(reference: () => string) {
         whereValues,
         where,
         renderWhere,
+    };
+}
+
+function useJoins(reference: () => string) {
+    const _joins: {
+        mode: 'INNER' | 'LEFT';
+        table: string;
+        alias: string;
+        condition: SQL;
+    }[] = [];
+    
+    function _join(mode: 'INNER' | 'LEFT', table: string, alias: string, condition: SQL) {
+        assert(mode === 'INNER' || mode === 'LEFT');
+        assert(isSQL(condition));
+        assertName(table);
+        assertName(alias);
+
+        _joins.push({ mode, table, alias, condition });
+    }
+
+    function leftJoin(table: string, alias: string, condition: SQL) {
+        _join('LEFT', table, alias, condition);
+    }
+
+    function innerJoin(table: string, alias: string, condition: SQL) {
+        _join('INNER', table, alias, condition);
+    }
+
+    function renderJoins(): SQL | null {
+        if (!_joins.length) return null;
+
+        let query = '';
+        const args: any[] = [];
+
+        for (const join of _joins) {
+            query += ` ${join.mode} JOIN "${join.table}" AS "${join.alias}" ON ${join.condition[0]}`;
+            args.push(...join.condition[1]);
+        }
+
+        return [query.trim(), args];
+    }
+
+    return {
+        _joins: () => _joins,
+        leftJoin,
+        innerJoin,
+        renderJoins,
     };
 }
 

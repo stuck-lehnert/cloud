@@ -3,33 +3,60 @@ package z
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 )
 
-type IntValidator Validator[int64]
+var _ Validator = &IntValidator{}
 
-func Int() IntValidator {
-	return func(value any) (int64, error) {
-		switch value.(type) {
-		case int64:
-			return value.(int64), nil
+type IntValidator struct {
+	min func() int64
+	max func() int64
+}
 
-		case int8:
-			return int64(value.(int8)), nil
-		case int16:
-			return int64(value.(int16)), nil
-		case int32:
-			return int64(value.(int32)), nil
-		case int:
-			return int64(value.(int)), nil
+func Int() *IntValidator {
+	return &IntValidator{}
+}
 
-		case float32, float64:
-			f := math.Round(value.(float64))
+func (v *IntValidator) Min(min int64) *IntValidator {
+	v.min = func() int64 { return min }
+	return v
+}
+
+func (v *IntValidator) MinFunc(min func() int64) *IntValidator {
+	v.min = min
+	return v
+}
+
+func (v *IntValidator) Max(max int64) *IntValidator {
+	v.max = func() int64 { return max }
+	return v
+}
+
+func (v *IntValidator) MaxFunc(max func() int64) *IntValidator {
+	v.max = max
+	return v
+}
+
+func (v *IntValidator) Validate(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	i, err := (func() (int64, error) {
+		rv := reflect.ValueOf(value)
+		if rv.CanInt() {
+			return rv.Int(), nil
+		} else if rv.CanUint() {
+			return int64(rv.Uint()), nil
+		} else if rv.CanFloat() {
+			f := math.Round(rv.Float())
 			return int64(f), nil
+		}
 
-		case string:
-			str := strings.TrimSpace(value.(string))
+		if str, ok := value.(string); ok {
+			str = strings.TrimSpace(str)
 
 			base := 10
 			if strings.HasPrefix(str, "0b") {
@@ -45,50 +72,36 @@ func Int() IntValidator {
 
 			i, err := strconv.ParseInt(str, base, 64)
 			if err != nil {
-				return 0, fmt.Errorf("String not parseable as base-%v integer value", base)
+				return 0, fmt.Errorf("value not parseable as base-%v integer value", base)
 			}
 
 			return i, nil
 		}
 
-		return 0, fmt.Errorf("Value is not convertable to type 'int64'")
+		return 0, fmt.Errorf("value is not interpretable to type 'int64'")
+	})()
+
+	if err != nil {
+		return nil, err
 	}
-}
 
-func (v IntValidator) Min(min int64) IntValidator {
-	return func(value any) (int64, error) {
-		i, err := v(value)
-		if err != nil {
-			return 0, err
-		}
-
+	if v.min != nil {
+		min := v.min()
 		if i < min {
-			return 0, fmt.Errorf("Value too small, min value is %v", min)
+			return nil, fmt.Errorf("value too small, minimum is %v", min)
 		}
-
-		return i, nil
 	}
-}
 
-func (v IntValidator) Max(max int64) IntValidator {
-	return func(value any) (int64, error) {
-		i, err := v(value)
-		if err != nil {
-			return 0, err
-		}
-
+	if v.max != nil {
+		max := v.max()
 		if i < max {
-			return 0, fmt.Errorf("Value too small, max value is %v", max)
+			return nil, fmt.Errorf("value too big, maximum is %v", max)
 		}
-
-		return i, nil
 	}
+
+	return i, nil
 }
 
-func (v IntValidator) Optional() Validator[*int64] {
-	return Optional(v.G())
-}
-
-func (v IntValidator) G() Validator[int64] {
-	return Validator[int64](v)
+func (v *IntValidator) TypeName() string {
+	return "Int"
 }

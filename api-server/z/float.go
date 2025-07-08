@@ -2,80 +2,110 @@ package z
 
 import (
 	"fmt"
+	"math"
+	"reflect"
 	"strconv"
 	"strings"
 )
 
-type FloatValidator Validator[float64]
+var _ Validator = &FloatValidator{}
 
-func Float() FloatValidator {
-	return func(value any) (float64, error) {
-		switch value.(type) {
-		case float64:
-			return value.(float64), nil
+type FloatValidator struct {
+	min       func() float64
+	max       func() float64
+	precision func() uint
+}
 
-		case float32:
-			return float64(value.(float32)), nil
-		case int:
-			return float64(value.(int)), nil
-		case int8:
-			return float64(value.(int8)), nil
-		case int16:
-			return float64(value.(int16)), nil
-		case int32:
-			return float64(value.(int32)), nil
-		case int64:
-			return float64(value.(int64)), nil
+func Float() *FloatValidator {
+	return &FloatValidator{}
 
-		case string:
-			str := strings.TrimSpace(value.(string))
+}
+
+func (v *FloatValidator) Min(min float64) *FloatValidator {
+	v.min = func() float64 { return min }
+	return v
+}
+
+func (v *FloatValidator) MinFunc(min func() float64) *FloatValidator {
+	v.min = min
+	return v
+}
+
+func (v *FloatValidator) Max(max float64) *FloatValidator {
+	v.max = func() float64 { return max }
+	return v
+}
+
+func (v *FloatValidator) MaxFunc(max func() float64) *FloatValidator {
+	v.max = max
+	return v
+}
+
+func (v *FloatValidator) Round(precision uint) *FloatValidator {
+	v.precision = func() uint { return precision }
+	return v
+}
+
+func (v *FloatValidator) RoundFunc(precision func() uint) *FloatValidator {
+	v.precision = precision
+	return v
+}
+
+func (v *FloatValidator) Validate(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	f, err := (func() (float64, error) {
+		rv := reflect.ValueOf(value)
+		if rv.CanFloat() {
+			return rv.Float(), nil
+		} else if rv.CanInt() {
+			return float64(rv.Int()), nil
+		} else if rv.CanUint() {
+			return float64(rv.Uint()), nil
+		}
+
+		if str, ok := value.(string); ok {
+			str = strings.TrimSpace(str)
 
 			f, err := strconv.ParseFloat(str, 64)
 			if err != nil {
-				return 0, fmt.Errorf("String not parseable as float64 value")
+				return 0, fmt.Errorf("value not parseable as float64 value")
 			}
 
 			return f, nil
 		}
 
-		return 0, fmt.Errorf("Value is not convertable to type 'float64'")
+		return 0, fmt.Errorf("value is not convertable to type 'float64'")
+	})()
+
+	if err != nil {
+		return nil, err
 	}
-}
 
-func (v FloatValidator) Min(min float64) FloatValidator {
-	return func(value any) (float64, error) {
-		i, err := v(value)
-		if err != nil {
-			return 0, err
-		}
-
-		if i < min {
-			return 0, fmt.Errorf("Value too small, min value is %v", min)
-		}
-
-		return i, nil
+	if v.precision != nil {
+		ratio := math.Pow10(int(v.precision()))
+		f = math.Round(f*ratio) / ratio
 	}
-}
 
-func (v FloatValidator) Max(max float64) FloatValidator {
-	return func(value any) (float64, error) {
-		i, err := v(value)
-		if err != nil {
-			return 0, err
+	if v.min != nil {
+		min := v.min()
+		if f < min {
+			return nil, fmt.Errorf("value too small, minimum is %v", min)
 		}
-
-		if i < max {
-			return 0, fmt.Errorf("Value too small, max value is %v", max)
-		}
-
-		return i, nil
 	}
+
+	if v.max != nil {
+		max := v.max()
+		if f < max {
+			return nil, fmt.Errorf("value too big, maximum is %v", max)
+		}
+	}
+
+	return f, nil
 }
 
-func (v FloatValidator) Optional() Validator[*float64] {
-	return Optional(v.G())
-}
-
-func (v FloatValidator) G() Validator[float64] {
-	return Validator[float64](v)
+func (v *FloatValidator) TypeName() string {
+	return "Float"
 }

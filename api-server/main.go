@@ -1,9 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
-	"github.com/Oudwins/zog"
 	"stuck-lehnert.de/cloud/api/server/config"
 	"stuck-lehnert.de/cloud/api/server/database"
 	"stuck-lehnert.de/cloud/api/server/resource"
@@ -27,39 +27,39 @@ func main() {
 		ModifiableFields: []string{"firstName", "lastName", "username", "email"},
 		StaticFields: map[string]*resource.TableResourceStaticField{
 			"id": {
-				Type: zog.String().Required(),
+				Type: z.NotNull(z.String()),
 			},
 			"firstName": {
-				Type:   zog.String().Required(),
+				Type:   z.NotNull(z.String()),
 				Column: "first_name",
 			},
 			"lastName": {
-				Type:   zog.String(),
+				Type:   z.String(),
 				Column: "last_name",
 			},
 			"username": {
-				Type: zog.String(),
+				Type: z.String(),
 			},
 			"email": {
-				Type: zog.String(),
+				Type: z.String(),
 			},
 			"createdAt": {
-				Type:   zog.Time().Required(),
+				Type:   z.NotNull(z.DateTime()),
 				Column: "created_at",
 			},
 			"modifiedAt": {
-				Type:   zog.Time().Required(),
+				Type:   z.NotNull(z.DateTime()),
 				Column: "modified_at",
 			},
 		},
 	})
 
-	fooUser, err := User.Attach(db, nil).FindUnique(map[string]any{"id": "0197bc2a6b41b683328b"})
+	users, err := User.Attach(db, nil).FindMany(nil)
 	if err != nil {
 		panic(err)
 	}
 
-	z.Optional[string](z.String().Lower().V())
+	rawJson, err := json.Marshal(users)
+	fmt.Println(string(rawJson))
 
-	fmt.Println(fooUser)
 }

@@ -3,19 +3,20 @@ package resource
 import (
 	"fmt"
 
-	"github.com/Oudwins/zog"
 	"github.com/huandu/go-sqlbuilder"
+	"github.com/samber/lo"
 	"stuck-lehnert.de/cloud/api/server/database"
+	"stuck-lehnert.de/cloud/api/server/z"
 )
 
 type TableResource struct {
 	props TableResourceProps
 
-	outputSchema      zog.ComplexZogSchema
-	uniqueWhereSchema zog.ComplexZogSchema
-	manyWhereSchema   zog.ComplexZogSchema
-	createInputSchema zog.ComplexZogSchema
-	modifyInputSchema zog.ComplexZogSchema
+	outputValidator      *z.ObjectValidator
+	uniqueWhereValidator *z.ObjectValidator
+	manyWhereValidator   *z.ObjectValidator
+	createInputValidator *z.ObjectValidator
+	modifyInputValidator *z.ObjectValidator
 }
 
 type TableResourceProps struct {
@@ -26,22 +27,27 @@ type TableResourceProps struct {
 	ModifiableFields []string
 	StaticFields     map[string]*TableResourceStaticField
 	DynamicFields    map[string]*TableResourceDynamicField
+	References       map[string]any
 	// Joins            map[string]*TableResourceJoin
 	SelectFilter func(q *sqlbuilder.SelectBuilder, ctx any) error
 	UpdateFilter func(q *sqlbuilder.UpdateBuilder, ctx any) error
 }
 
 type TableResourceStaticField struct {
-	Type   zog.ZogSchema
+	Type   z.Validator
 	Column string
 }
 
 type TableResourceDynamicField struct {
-	Type zog.ZogSchema
-	Expr func(alias string, ctx any) string
+	Type z.Validator
+	Expr func(alias string, ctx any) (string, []any)
 }
 
-type TableResourceJoin struct {
+type TableResourceReference struct {
+	Resource func() *TableResource
+	Join     func(lhs, rhs string) (string, []any)
+
+	Junction func()
 }
 
 func NewTableResource(props TableResourceProps) (*TableResource, error) {
@@ -96,7 +102,26 @@ func NewTableResource(props TableResourceProps) (*TableResource, error) {
 	for _, field := range props.PrimaryKey {
 		_, found := props.StaticFields[field]
 		if !found {
-			return nil, fmt.Errorf("Primary references static field '%s', which is not defined", field)
+			return nil, fmt.Errorf("Primary key references static field '%s', which is not defined", field)
+		}
+	}
+
+	for _, field := range props.CreateOnlyFields {
+		_, found := props.StaticFields[field]
+		if !found {
+			return nil, fmt.Errorf("Create only set references static field '%s', which is not defined", field)
+		}
+
+		if _, found := lo.Find(props.ModifiableFields, func(f string) bool { return f == field }); found {
+			return nil, fmt.Errorf("Create only field '%s' is tagged as modifiable, which is not allowed")
+		}
+
+	}
+
+	for _, field := range props.ModifiableFields {
+		_, found := props.StaticFields[field]
+		if !found {
+			return nil, fmt.Errorf("Modifiable set references static field '%s', which is not defined", field)
 		}
 	}
 
@@ -144,8 +169,46 @@ func NewTableResource(props TableResourceProps) (*TableResource, error) {
 		}
 	}
 
+	uniqueWhereValidatorFields := map[string]z.Validator{}
+	for _, attr := range props.PrimaryKey {
+		staticField := props.StaticFields[attr]
+		uniqueWhereValidatorFields[attr] = staticField.Type
+	}
+
+	outputValidatorFields := map[string]z.Validator{}
+	manyWhereValidatorFields := map[string]z.Validator{}
+
+	for attr, fieldDef := range props.StaticFields {
+		outputValidatorFields[attr] = fieldDef.Type
+		manyWhereValidatorFields[attr] = z.Optional(fieldDef.Type)
+	}
+
+	for attr, fieldDef := range props.DynamicFields {
+		outputValidatorFields[attr] = fieldDef.Type
+	}
+
+	createInputValidatorFields := map[string]z.Validator{}
+	modifyInputValidatorFields := map[string]z.Validator{}
+
+	for _, attr := range props.ModifiableFields {
+		staticField := props.StaticFields[attr]
+		createInputValidatorFields[attr] = staticField.Type
+		modifyInputValidatorFields[attr] = z.Optional(staticField.Type)
+	}
+
+	for _, attr := range props.CreateOnlyFields {
+		staticField := props.StaticFields[attr]
+		createInputValidatorFields[attr] = staticField.Type
+	}
+
 	return &TableResource{
 		props: props,
+
+		outputValidator:      z.Object(outputValidatorFields),
+		uniqueWhereValidator: z.Object(uniqueWhereValidatorFields),
+		manyWhereValidator:   z.Object(manyWhereValidatorFields),
+		createInputValidator: z.Object(createInputValidatorFields),
+		modifyInputValidator: z.Object(modifyInputValidatorFields),
 	}, nil
 }
 
@@ -162,10 +225,13 @@ func (tr *TableResource) Attach(db *database.Instance, ctx any) *AttachedTableRe
 // returns (nil, nil), iff no resource has been found;
 // returns (res, nil) on success and (nil, err) on error
 func (atr *AttachedTableResource) FindUnique(where map[string]any) (map[string]any, error) {
-	var parsedWhere map[string]any
-	issueMap := atr.uniqueWhereSchema.Parse(where, &parsedWhere)
-	if len(issueMap) > 0 {
-		return nil, fmt.Errorf("Invalid where input for '%s'.FindUnique(..)", atr.props.Name)
+	if where == nil {
+		where = map[string]any{}
+	}
+
+	parsedWhere, err := z.Validate[map[string]any](atr.uniqueWhereValidator, where)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid where input for '%s'.FindUnique(..): %v", atr.props.Name, err)
 	}
 
 	columns := []string{}
@@ -181,23 +247,26 @@ func (atr *AttachedTableResource) FindUnique(where map[string]any) (map[string]a
 
 	q.Limit(1)
 
-	maps, err := atr.db.QueryMaps(q)
+	rows, err := atr.db.QueryAsJson(q)
 	if err != nil {
 		return nil, fmt.Errorf("'%s'.FindUnique(..) failed to query database: %v", atr.props.Name, err)
 	}
 
-	if len(maps) <= 0 {
+	if len(rows) <= 0 {
 		return nil, nil
 	}
 
-	return maps[0], nil
+	return rows[0], nil
 }
 
 func (atr *AttachedTableResource) FindMany(where map[string]any) ([]map[string]any, error) {
-	var parsedWhere map[string]any
-	issueMap := atr.manyWhereSchema.Parse(where, &parsedWhere)
-	if len(issueMap) > 0 {
-		return nil, fmt.Errorf("Invalid where input for '%s'.FindMany(..)", atr.props.Name)
+	if where == nil {
+		where = map[string]any{}
+	}
+
+	parsedWhere, err := z.Validate[map[string]any](atr.manyWhereValidator, where)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid where input for '%s'.FindMany(..): %v", atr.props.Name, err)
 	}
 
 	columns := []string{}
@@ -211,10 +280,17 @@ func (atr *AttachedTableResource) FindMany(where map[string]any) ([]map[string]a
 		q.Where(fmt.Sprintf(`"main"."%s" = %s`, key, q.Var(value)))
 	}
 
-	maps, err := atr.db.QueryMaps(q)
+	rows, err := atr.db.QueryAsJson(q)
 	if err != nil {
 		return nil, fmt.Errorf("'%s'.FindMany(..) failed to query database: %v", atr.props.Name, err)
 	}
 
-	return maps, nil
+	for i := range rows {
+		rows[i], err = z.Validate[map[string]any](atr.outputValidator, rows[i])
+		if err != nil {
+			return nil, fmt.Errorf("'%s'.FindMany(..) failed to validate results: %v", atr.props.Name, err)
+		}
+	}
+
+	return rows, nil
 }

@@ -11,12 +11,19 @@ CREATE TABLE products (
     ) STORED,
     _search tsvector NOT NULL GENERATED ALWAYS AS (
         create_searchable(name, description)
-    ) STORED
+    ) STORED,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TRIGGER products_modified_at
+BEFORE UPDATE ON products
+FOR EACH ROW
+EXECUTE FUNCTION trigger_modified_at();
 
 CREATE INDEX ON products (_sort);
 CREATE INDEX ON products USING GIN (_search);
-
 
 CREATE TABLE product_units (
     product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,

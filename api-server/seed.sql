@@ -10,7 +10,7 @@ TRUNCATE tools CASCADE;
 \set user_id 'SELECT id FROM users WHERE '
 \set tool_id 'SELECT id FROM tools WHERE '
 \set product_id 'SELECT id FROM products WHERE '
-
+\set customer_id 'SELECT id FROM customers WHERE '
 
 INSERT INTO groups (name)
 VALUES ('Minister'),
@@ -75,7 +75,7 @@ INSERT INTO user_roles (user_id, role_name)
 VALUES ((:user_id username = 'friedrich.merz'), ':admin');
 
 
-INSERT INTO TOOLS (custom_id, brand, category, label)
+INSERT INTO tools (custom_id, brand, category, label)
 VALUES (1,  'Hilti',       'Akkuschrauber',   'SF 6H-A'),
        (2,  'Makita',      'Akkuschrauber',   'DDF484Z'),
        (3,  'Milwaukee',   'Akkuschrauber',   'M18 FDD-502C'),
@@ -117,5 +117,15 @@ VALUES (1,  'Hilti',       'Akkuschrauber',   'SF 6H-A'),
        (39, 'Makita',      'Schlagschrauber', 'TW1000'),
        (40, 'Milwaukee',   'Schlagschrauber', 'M18 FID-502C');
 
+INSERT INTO customers (salutation, name)
+VALUES ('Das', 'Volk');
+
+INSERT INTO groups (name, is_system_group)
+VALUES ('Ausschuss (LEAD)', TRUE),
+       ('Ausschuss (VIEW)', TRUE),
+       ('Ausschuss (MODIFY)', TRUE);
+
+INSERT INTO projects (title, customer_id, lead_group_id, modify_group_id, view_group_id)
+VALUES ('Ausschuss', (:customer_id name = 'Volk'), (:group_id name = 'Ausschuss (LEAD)'), (:group_id name = 'Ausschuss (MODIFY)'), (:group_id name = 'Ausschuss (VIEW)'));
 
 COMMIT;

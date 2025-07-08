@@ -1,37 +1,75 @@
 package z
 
-import "reflect"
+import "fmt"
 
-type Validator[T any] func(value any) (T, error)
-
-func Optional[T any](v Validator[T]) Validator[*T] {
-	return func(value any) (*T, error) {
-		if value == nil {
-			return nil, nil
-		}
-
-		validated, err := v(value)
-		if err != nil {
-			return nil, nil
-		}
-
-		if reflect.ValueOf(validated).IsNil() {
-			return nil, nil
-		}
-
-		return &validated, nil
-	}
+type Validator interface {
+	Validate(value any) (any, error)
+	TypeName() string
 }
 
-func Transform[A any, B any](v Validator[A], transform func(value A) (B, error)) Validator[B] {
-	return func(value any) (B, error) {
-		var result B
+func Validate[T any](validator Validator, value any) (T, error) {
+	var result T
 
-		validated, err := v(value)
-		if err != nil {
-			return result, err
-		}
-
-		return transform(validated)
+	validated, err := validator.Validate(value)
+	if err != nil {
+		return result, err
 	}
+
+	return validated.(T), nil
+}
+
+type notnullValidator struct {
+	wrapped Validator
+}
+
+func NotNull(v Validator) Validator {
+	return &notnullValidator{v}
+}
+
+func IsNotNull(v Validator) bool {
+	_, ok := v.(*notnullValidator)
+	return ok
+}
+
+func (v *notnullValidator) Validate(value any) (any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value cannot be null, it is required")
+	}
+
+	validated, err := v.wrapped.Validate(value)
+	if err != nil {
+		return nil, err
+	}
+
+	if validated == nil {
+		return nil, fmt.Errorf("value cannot be null-equivalent, it is required")
+	}
+
+	return validated, nil
+}
+
+func (v *notnullValidator) TypeName() string {
+	return fmt.Sprintf("%s!", v.wrapped.TypeName())
+}
+
+type transformedValidator struct {
+	wrapped   Validator
+	transform func(value any) (any, error)
+}
+
+func Transform(v Validator, transform func(value any) (any, error)) Validator {
+	return &transformedValidator{v, transform}
+}
+
+func (v *transformedValidator) Validate(value any) (any, error) {
+	validated, err := v.wrapped.Validate(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return v.transform(validated)
+}
+
+func (v *transformedValidator) TypeName() string {
+	return v.wrapped.TypeName()
 }
