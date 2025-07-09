@@ -2,9 +2,11 @@ package resource
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/huandu/go-sqlbuilder"
 	"github.com/samber/lo"
+	"maps"
 	"stuck-lehnert.de/cloud/api/server/database"
 	"stuck-lehnert.de/cloud/api/server/z"
 )
@@ -12,7 +14,9 @@ import (
 type TableResource struct {
 	props TableResourceProps
 
-	outputValidator      *z.ObjectValidator
+	noRefOutputValidator  *z.ObjectValidator
+	outputValidatorFields map[string]z.Validator
+
 	uniqueWhereValidator *z.ObjectValidator
 	manyWhereValidator   *z.ObjectValidator
 	createInputValidator *z.ObjectValidator
@@ -27,10 +31,10 @@ type TableResourceProps struct {
 	ModifiableFields []string
 	StaticFields     map[string]*TableResourceStaticField
 	DynamicFields    map[string]*TableResourceDynamicField
-	References       map[string]any
-	// Joins            map[string]*TableResourceJoin
-	SelectFilter func(q *sqlbuilder.SelectBuilder, ctx any) error
-	UpdateFilter func(q *sqlbuilder.UpdateBuilder, ctx any) error
+	References       map[string]*TableResourceReference
+	SelectFilter     func(q *sqlbuilder.SelectBuilder, ctx any) error
+	UpdateFilter     func(q *sqlbuilder.UpdateBuilder, ctx any) error
+	DeleteFilter     func(q *sqlbuilder.UpdateBuilder, ctx any) error
 }
 
 type TableResourceStaticField struct {
@@ -40,14 +44,16 @@ type TableResourceStaticField struct {
 
 type TableResourceDynamicField struct {
 	Type z.Validator
-	Expr func(alias string, ctx any) (string, []any)
+	Expr func(alias string, ctx any) string
 }
 
 type TableResourceReference struct {
 	Resource func() *TableResource
-	Join     func(lhs, rhs string) (string, []any)
 
-	Junction func()
+	Join func(lhs, rhs string) string
+
+	JunctionTable string
+	Junction      func(lhs, junc, rhs string) []string
 }
 
 func NewTableResource(props TableResourceProps) (*TableResource, error) {
@@ -87,9 +93,9 @@ func NewTableResource(props TableResourceProps) (*TableResource, error) {
 		props.ModifiableFields = []string{}
 	}
 
-	// if props.Joins == nil {
-	// 	props.Joins = map[string]*TableResourceJoin{}
-	// }
+	if props.References == nil {
+		props.References = map[string]*TableResourceReference{}
+	}
 
 	if props.SelectFilter == nil {
 		props.SelectFilter = func(q *sqlbuilder.SelectBuilder, ctx any) error { return nil }
@@ -168,6 +174,32 @@ func NewTableResource(props TableResourceProps) (*TableResource, error) {
 		}
 	}
 
+	for name, definition := range props.References {
+		if definition == nil {
+			return nil, fmt.Errorf("Definition for reference '%s' is nil, which is not allowed", name)
+		}
+
+		if definition.Resource == nil {
+			return nil, fmt.Errorf("Definition for reference '%s' is missing the 'Resource' attribute", name)
+		}
+
+		if definition.Join == nil && (len(definition.JunctionTable) <= 0 || definition.Junction == nil) {
+			return nil, fmt.Errorf("Definition for reference '%s' defines neither a join nor a junction, which is not allowed", name)
+		}
+
+		if definition.Join != nil && (len(definition.JunctionTable) > 0 || definition.Junction != nil) {
+			return nil, fmt.Errorf("Definition for reference '%s' defines both a join and a junction, which is not allowed", name)
+		}
+
+		if err := CheckName(name); err != nil {
+			return nil, err
+		}
+
+		if err := CheckName(definition.JunctionTable); err != nil {
+			return nil, err
+		}
+	}
+
 	uniqueWhereValidatorFields := map[string]z.Validator{}
 	for _, attr := range props.PrimaryKey {
 		staticField := props.StaticFields[attr]
@@ -200,10 +232,15 @@ func NewTableResource(props TableResourceProps) (*TableResource, error) {
 		createInputValidatorFields[attr] = staticField.Type
 	}
 
+	outputValidatorFieldsCopy := map[string]z.Validator{}
+	maps.Copy(outputValidatorFieldsCopy, outputValidatorFields)
+
 	return &TableResource{
 		props: props,
 
-		outputValidator:      z.Object(outputValidatorFields),
+		noRefOutputValidator:  z.Object(outputValidatorFields),
+		outputValidatorFields: outputValidatorFieldsCopy,
+
 		uniqueWhereValidator: z.Object(uniqueWhereValidatorFields),
 		manyWhereValidator:   z.Object(manyWhereValidatorFields),
 		createInputValidator: z.Object(createInputValidatorFields),
@@ -258,25 +295,110 @@ func (atr *AttachedTableResource) FindUnique(where map[string]any) (map[string]a
 	return rows[0], nil
 }
 
-func (atr *AttachedTableResource) FindMany(where map[string]any) ([]map[string]any, error) {
-	if where == nil {
-		where = map[string]any{}
+type FindManyOpts struct {
+	Where   map[string]any
+	Include []string
+	Search  string
+}
+
+func (atr *AttachedTableResource) FindMany(opts FindManyOpts) ([]map[string]any, error) {
+	if opts.Where == nil {
+		opts.Where = map[string]any{}
 	}
 
-	parsedWhere, err := z.Validate[map[string]any](atr.manyWhereValidator, where)
+	if opts.Include == nil {
+		opts.Include = []string{}
+	}
+
+	parsedWhere, err := z.Validate[map[string]any](atr.manyWhereValidator, opts.Where)
 	if err != nil {
 		return nil, fmt.Errorf("Invalid where input for '%s'.FindMany(..): %v", atr.props.Name, err)
 	}
 
-	columns := []string{}
-	for name, definition := range atr.props.StaticFields {
-		columns = append(columns, fmt.Sprintf(`"main"."%s" AS "%s"`, definition.Column, name))
-	}
+	q := sqlbuilder.Select().From(fmt.Sprintf(`"%s" AS "main"`, atr.props.TableName))
 
-	q := sqlbuilder.Select(columns...).From(fmt.Sprintf(`"%s" AS "main"`, atr.props.TableName))
+	for name, definition := range atr.props.StaticFields {
+		q.SelectMore(fmt.Sprintf(`"main"."%s" AS "%s"`, definition.Column, name))
+	}
 
 	for key, value := range parsedWhere {
 		q.Where(fmt.Sprintf(`"main"."%s" = %s`, key, q.Var(value)))
+	}
+
+	validatorFields := map[string]z.Validator{}
+	maps.Copy(validatorFields, atr.outputValidatorFields)
+
+	aliasCounter := 0
+	for _, included := range opts.Include {
+		reference, ok := atr.props.References[included]
+		if !ok {
+			return nil, fmt.Errorf("'%s'.FindMany(..): Tried to include reference '%s', which does not exist", atr.props.Name, included)
+		}
+
+		resource := reference.Resource()
+
+		targetAlias := fmt.Sprintf(`"j%v"`, aliasCounter)
+		aliasCounter += 1
+
+		if reference.Join != nil {
+			condition := reference.Join(`"main"`, targetAlias)
+			q.JoinWithOption(
+				sqlbuilder.LeftJoin,
+				fmt.Sprintf(`"%s" AS %s`, resource.props.TableName, targetAlias),
+				condition,
+			)
+		} else {
+			junctionAlias := fmt.Sprintf(`"j%v"`, aliasCounter)
+			aliasCounter += 1
+
+			conditions := reference.Junction(`"main"`, junctionAlias, targetAlias)
+			if len(conditions) != 2 {
+				return nil, fmt.Errorf("'%s'.FindMany(..): junction for reference '%s' did not return 2 conditions", atr.props.Name, included)
+			}
+
+			q.JoinWithOption(
+				sqlbuilder.LeftJoin,
+				fmt.Sprintf(`"%s" AS %s`, reference.JunctionTable, junctionAlias),
+				conditions[0],
+			)
+
+			q.JoinWithOption(
+				sqlbuilder.LeftJoin,
+				fmt.Sprintf(`"%s" AS %s`, resource.props.TableName, targetAlias),
+				conditions[1],
+			)
+		}
+
+		jsonbBuildArgs := []string{}
+		for name, definition := range resource.props.StaticFields {
+			jsonbBuildArgs = append(
+				jsonbBuildArgs,
+				fmt.Sprintf("'%s'", name),
+				fmt.Sprintf(`%s."%s"`, targetAlias, definition.Column),
+			)
+		}
+
+		for name, definition := range resource.props.DynamicFields {
+			jsonbBuildArgs = append(
+				jsonbBuildArgs,
+				fmt.Sprintf("'%s'", name),
+				definition.Expr(targetAlias, atr.ctx),
+			)
+		}
+
+		q.SelectMore(
+			fmt.Sprintf(
+				`array_agg(jsonb_build_object(%s)) AS "%s"`,
+				strings.Join(jsonbBuildArgs, ", "),
+				included,
+			),
+		)
+
+		validatorFields[included] = z.NotNull(z.Array(resource.noRefOutputValidator))
+	}
+
+	for _, attr := range atr.props.PrimaryKey {
+		q.GroupBy(fmt.Sprintf(`"main"."%s"`, attr))
 	}
 
 	rows, err := atr.db.QueryAsJson(q)
@@ -285,7 +407,7 @@ func (atr *AttachedTableResource) FindMany(where map[string]any) ([]map[string]a
 	}
 
 	for i := range rows {
-		rows[i], err = z.Validate[map[string]any](atr.outputValidator, rows[i])
+		rows[i], err = z.Validate[map[string]any](z.Object(validatorFields), rows[i])
 		if err != nil {
 			return nil, fmt.Errorf("'%s'.FindMany(..) failed to validate results: %v", atr.props.Name, err)
 		}

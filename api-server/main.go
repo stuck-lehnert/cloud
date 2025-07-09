@@ -20,7 +20,41 @@ func main() {
 		panic(err)
 	}
 
-	User, err := resource.NewTableResource(resource.TableResourceProps{
+	var User *resource.TableResource
+	var Group *resource.TableResource
+
+	Group, err = resource.NewTableResource(resource.TableResourceProps{
+		Name:             "Group",
+		TableName:        "groups",
+		PrimaryKey:       []string{"id"},
+		ModifiableFields: []string{"name", "description"},
+		StaticFields: map[string]*resource.TableResourceStaticField{
+			"id": {
+				Type: z.NotNull(z.String()),
+			},
+			"name": {
+				Type: z.NotNull(z.String()),
+			},
+			"description": {
+				Type: z.String(),
+			},
+			"createdAt": {
+				Type:   z.NotNull(z.DateTime()),
+				Column: "created_at",
+			},
+			"modifiedAt": {
+				Type:   z.NotNull(z.DateTime()),
+				Column: "modified_at",
+			},
+		},
+		References: map[string]*resource.TableResourceReference{},
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	User, err = resource.NewTableResource(resource.TableResourceProps{
 		Name:             "User",
 		TableName:        "users",
 		PrimaryKey:       []string{"id"},
@@ -52,9 +86,29 @@ func main() {
 				Column: "modified_at",
 			},
 		},
+		References: map[string]*resource.TableResourceReference{
+			"groups": {
+				Resource:      func() *resource.TableResource { return Group },
+				JunctionTable: "group_member_users",
+				Junction: func(lhs, junc, rhs string) []string {
+					return []string{
+						fmt.Sprintf(`%s.id = %s.member_user_id`, lhs, junc),
+						fmt.Sprintf(`%s.group_id = %s.id`, junc, rhs),
+					}
+				},
+			},
+		},
 	})
 
-	users, err := User.Attach(db, nil).FindMany(nil)
+	if err != nil {
+		panic(err)
+	}
+
+	users, err := User.Attach(db, nil).FindMany(resource.FindManyOpts{
+		Where:   map[string]any{"username": "friedrich.merz"},
+		Include: []string{"groups"},
+	})
+
 	if err != nil {
 		panic(err)
 	}
