@@ -11,6 +11,9 @@ const groupSchema = z.object({
   description: z.string().nullable(),
 
   deletable: z.boolean(),
+
+  created_at: z.date(),
+  modified_at: z.date(),
 }).strip();
 
 const groupUnique = z.object({ id: myInputId }).strict();

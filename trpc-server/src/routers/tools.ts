@@ -15,6 +15,9 @@ const toolSchema = z.object({
   available: z.boolean().optional(),
 
   archived_since: z.date().nullable(),
+
+  created_at: z.date(),
+  modified_at: z.date(),
 }).strip();
 
 const toolUnique = z.union([
@@ -147,17 +150,66 @@ export const toolsRouter = resourceRouter({
         .where(input);
     }),
 
-  track: roledProc('create:toolTrackings')
+  /**
+   * Track the given tools (specified by `tool_ids`).
+   * - Stores the given parameters within the created `tool_tracking` instance.
+   * - Automatically ends any active trackings before creating new ones.
+   * - Records failed tool ids in `failed_tool_ids`.
+   */
+  track: roledProc('track:tools')
     .input(z.object({
       tool_ids: z.array(myInputId),
-      responsible: myInputId.nullish(),
-      project: myInputId.nullish(),
+      responsible_user_id: myInputId.nullish(),
+      project_id: myInputId.nullish(),
       deadline: z.coerce.date().nullish(),
     }).strict())
     .output(z.object({
       failed_tool_ids: z.array(myOutputId),
     }).strip())
     .mutation(async ({ ctx, input }) => {
-      
+      input.tool_ids = [...new Set(input.tool_ids)];
+
+      const failed_tool_ids: string[] = [];
+
+      for (const tool_id of input.tool_ids) {
+        await db.transaction(async tx => {
+          // end any active tracking
+          await tx('tool_trackings').update({
+            ended_at: tx.raw('now()'),
+            ended_by_user_id: ctx.auth!.user.id,
+          }).where({
+            tool_id,
+            ended_at: null,
+          });
+
+          // create new tracking
+          await tx('tool_trackings').insert({
+            tool_id,
+
+            project_id: input.project_id ?? null,
+            responsible_user_id: input.responsible_user_id ?? null,
+            deadline_at: input.deadline ?? null,
+
+            started_by_user_id: ctx.auth!.user.id,
+          });
+        }).catch(e => {
+          // track failed
+          failed_tool_ids.push(tool_id);
+        });
+      }
+
+      return { failed_tool_ids };
+    }),
+
+  untrack: roledProc('track:tools')
+    .input(z.object({ tool_id: myInputId }).strict())
+    .mutation(async ({ ctx, input }) => {
+      await db('tool_trackings').update({
+        ended_at: db.raw('now()'),
+        ended_by_user_id: ctx.auth!.user.id,
+      }).where({
+        tool_id: input.tool_id,
+        ended_at: null,
+      });
     }),
 });

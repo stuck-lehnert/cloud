@@ -4,7 +4,7 @@ CREATE TABLE tool_trackings (
     comment VARCHAR(255),
 
     tool_id BIGINT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
-    responsible_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    responsible_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     project_id BIGINT REFERENCES projects(id) ON DELETE SET NULL,
     
     started_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
@@ -29,7 +29,7 @@ CREATE INDEX ON tool_trackings USING GIN (_search);
 CREATE INDEX ON tool_trackings (_sort);
 
 CREATE INDEX ON tool_trackings (tool_id);
-CREATE INDEX ON tool_trackings (responsible_id);
+CREATE INDEX ON tool_trackings (responsible_user_id);
 CREATE INDEX ON tool_trackings (project_id);
 CREATE INDEX ON tool_trackings (started_by_user_id);
 CREATE INDEX ON tool_trackings (ended_by_user_id);

@@ -12,6 +12,9 @@ const projectSchema = z.object({
   address: myAddress.nullable(),
 
   customer_id: myOutputId.nullable(),
+
+  created_at: z.date(),
+  modified_at: z.date(),
 }).strip();
 
 const projectUnique = z.object({ id: myInputId }).strict();
@@ -33,6 +36,8 @@ export const projectsRouter = resourceRouter({
       search: myString.optional(),
       limit: z.int().nonnegative().default(100),
       offset: z.int().nonnegative().default(0),
+
+      only_archived: z.boolean().default(false),
     }).strict())
     .output(z.array(projectSchema))
     .query(async ({ ctx, input }) => {
@@ -40,10 +45,18 @@ export const projectsRouter = resourceRouter({
         .limit(input.limit).offset(input.offset)
         .orderBy('_sort');
 
+      if (!input.only_archived) {
+        q.where('archived_since', null);
+      } else {
+        q.whereNot('archived_since', null);
+      }
+
       if (!ctx.auth!.canDo('view:projects')) {
         q.whereIn('leader_group_id', ctx.auth!.groupIds)
           .orWhereIn('member_group_id', ctx.auth!.groupIds)
-          .orWhereIn('visitor_group_id', ctx.auth!.groupIds)
+          .orWhereIn('visitor_group_id', ctx.auth!.groupIds);
+
+        q.where('archived_since', null);
       }
 
       if (input.search) {

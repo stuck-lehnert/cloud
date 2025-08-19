@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@trpc/client": "^11.4.4",
-    "solid-js": "^1.9.5"
+    "solid-js": "^1.9.5",
+    "superjson": "^2.2.2"
   }
 }

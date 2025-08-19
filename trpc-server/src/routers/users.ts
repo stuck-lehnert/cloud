@@ -17,6 +17,9 @@ const userSchema = z.object({
   email: z.string().nullable(),
 
   disabled_since: z.date().nullable(),
+
+  created_at: z.date(),
+  modified_at: z.date(),
 }).strip();
 
 const userUnique = z.union([
@@ -43,15 +46,25 @@ export const usersRouter = resourceRouter({
       search: myString.optional(),
       limit: z.int().nonnegative().default(100),
       offset: z.int().nonnegative().default(0),
+
+      only_disabled: z.boolean().default(false),
     }).strict())
     .output(z.array(userSchema))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const q = db('users').select('*')
         .limit(input.limit).offset(input.offset)
         .orderBy('_sort');
 
       if (input.search) {
         q.whereRaw(`_search @@ create_query(?)`, [input.search]);
+      }
+
+      if (!ctx.auth!.canDo('view:users') || !input.only_disabled) {
+        q.where('disabled_since', null);
+      }
+      
+      if (input.only_disabled) {
+        q.whereNot('disabled_since', null);
       }
 
       return await q;

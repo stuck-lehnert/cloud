@@ -24,7 +24,12 @@ VALUES  (':admin', 'Administrator'),
         ('modify:tools', 'Werkzeuge bearbeiten'),
         ('delete:tools', 'Werkzeuge löschen'),
 
+        ('track:tools', 'Werkzeuge ein- und ausbuchen'),
         ('view:toolTrackings', 'Alle Werkzeugbuchungen einsehen'),
-        ('create:toolTrackings', 'Werkzeuge ein- und ausbuchen'),
         ('modify:toolTrackings', 'Werkzeugbuchungen abändern'),
-        ('delete:toolTrackings', 'Werkzeugbuchungen löschen');
+        ('delete:toolTrackings', 'Werkzeugbuchungen löschen'),
+        
+        ('view:products', 'Alle Produkte einsehen (Kein Effekt)'),
+        ('create:products', 'Produkte erstellen'),
+        ('modify:products', 'Produkte bearbeiten'),
+        ('delete:products', 'Produkte löschen');

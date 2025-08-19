@@ -2,12 +2,16 @@ import { initTRPC, TRPCError, type AnyMutationProcedure, type AnyQueryProcedure,
 import { log } from './log';
 import type { AuthResult } from './auth';
 import type { Role } from './generated/roles';
+import superjson from 'superjson';
 
 export type Context = {
   auth: AuthResult | null;
 };
 
-export const t = initTRPC.context<Context>().create();
+export const t = initTRPC.context<Context>().create({
+  transformer: superjson,  
+});
+
 export const router = t.router;
 
 const defaultProc = t.procedure.use(async (opts) => {
@@ -31,10 +35,10 @@ export const authedProc = defaultProc.use(async ({ ctx, next }) => {
   return next();
 });
 
-export function roledProc(...requiredRoles: Role[]) {
+export function roledProc(requiredRole: Role) {
   return authedProc.use(async ({ ctx, next }) => {
-    if (!requiredRoles.every(r => ctx.auth!.canDo(r))) {
-      throw error('FORBIDDEN');
+    if (!ctx.auth!.canDo(requiredRole)) {
+      throw error('FORBIDDEN', `Missing role '${requiredRole}'`);
     }
 
     return next();
@@ -56,7 +60,7 @@ export function resourceRouter<
   return router(methods);
 };
 
-export function error(code: TRPC_ERROR_CODE_KEY) {
-  return new TRPCError({ code });
+export function error(code: TRPC_ERROR_CODE_KEY, message?: string) {
+  return new TRPCError({ code, message });
 }
 
