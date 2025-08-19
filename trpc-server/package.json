@@ -1,0 +1,23 @@
+{
+  "name": "trpc-server",
+  "module": "src/main.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "commander": "^14.0.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@trpc/server": "^11.4.4",
+    "jose": "^6.0.12",
+    "knex": "^3.1.0",
+    "pg": "^8.16.3",
+    "zod": "^4.0.15"
+  }
+}
